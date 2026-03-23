@@ -1,0 +1,93 @@
+# Valmo Hardstop Automation
+
+Automation to process the daily **Valmo Control Tower** email, extract hardstop and lost attachments, and push filtered data to Google Sheets. Optionally sends Hardstop summary to WhatsApp.
+
+## Email Source
+
+- **From:** lsn-meesho-central@loadshare.net  
+- **Subject:** `[IMP] Valmo Control Tower!!! DD-MM-YYYY` (date varies daily)
+- **Attachments:**
+  - `hardstop_lsn-meesho-central@loadshare.net` → Hardstop worksheet
+  - `lost_lsn-meesho-central@loadshare.net` → LostMarked worksheet
+
+## Output
+
+- **Google Sheet:** [Meesho Reports](https://docs.google.com/spreadsheets/d/1qnqzVf-S41F4S6DN8CRtXVgk-BcsaW377aVVEyFrnzg)
+- **Worksheets:** Hardstop, LostMarked
+- **Locations filtered:** MQR, MQE, YLG, YLZ, MHK
+
+## Logic
+
+- Searches for the **latest** email with that subject (and today's date when possible)
+- **Same date:** Replace existing rows for that date
+- **New date:** Append rows
+- **WhatsApp:** Sends header + rows for the report date (when `whatsapp_sheet_image` is available)
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Add credentials
+
+- **`service_account_key.json`** – Google service account for Sheets (share the sheet with the service account email)
+- **Gmail App Password** – [Create one](https://myaccount.google.com/apppasswords)
+
+### 3. Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `GMAIL_EMAIL` | Gmail address that receives the Valmo email |
+| `GMAIL_APP_PASSWORD` | Gmail App Password |
+| `WHAPI_TOKEN` | WhatsApp API token (optional, for Hardstop image) |
+| `WHATSAPP_PHONE` | WhatsApp recipient(s) (optional) |
+
+## Usage
+
+```bash
+# Run from Gmail (fetches today's report)
+python valmo_hardstop_gmail_to_sheet.py
+
+# Search for a specific date
+python valmo_hardstop_gmail_to_sheet.py --date 24-03-2026
+
+# Manual run with local files
+python valmo_hardstop_gmail_to_sheet.py --file hardstop.xlsx --date 24-03-2026
+python valmo_hardstop_gmail_to_sheet.py --lost-file lost.xlsx --date 24-03-2026
+```
+
+## Scheduling
+
+### Windows (4 PM & 10 PM IST)
+
+```bash
+# One-time setup
+schedule_valmo_hardstop.bat
+
+# Remove schedule
+unschedule_valmo_hardstop.bat
+```
+
+### GitHub Actions (optional)
+
+The workflow `.github/workflows/valmo-hardstop.yml` runs at **4 PM** and **10 PM IST** when secrets are configured. Add these repository secrets:
+
+- `GMAIL_EMAIL`
+- `GMAIL_APP_PASSWORD`
+- `SERVICE_ACCOUNT_JSON` (contents of `service_account_key.json`)
+- `WHAPI_TOKEN` (optional)
+- `WHATSAPP_PHONE` (optional)
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `valmo_hardstop_gmail_to_sheet.py` | Main script |
+| `whatsapp_sheet_image.py` | WhatsApp image sender (optional) |
+| `run_valmo_hardstop.bat` | Batch runner |
+| `schedule_valmo_hardstop.bat` | Create Windows scheduled tasks |
+| `schedule_valmo_hardstop.ps1` | PowerShell scheduler |
+| `unschedule_valmo_hardstop.bat` | Remove scheduled tasks |

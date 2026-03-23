@@ -1,0 +1,41 @@
+# Valmo Hardstop - Run at 4 PM & 10 PM IST
+# 4 PM IST = 10:30 UTC, 10 PM IST = 16:30 UTC
+name: Valmo Hardstop
+
+on:
+  schedule:
+    - cron: '30 10 * * *'   # 4:00 PM IST (10:30 UTC)
+    - cron: '30 16 * * *'   # 10:00 PM IST (16:30 UTC)
+  workflow_dispatch:        # Manual trigger
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create service account key
+        run: |
+          python -c "import os,json; open('service_account_key.json','w').write(os.environ.get('SERVICE_ACCOUNT_JSON','{}'))"
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+
+      - name: Run Valmo Hardstop
+        env:
+          GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          WHAPI_TOKEN: ${{ secrets.WHAPI_TOKEN }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+        run: python valmo_hardstop_gmail_to_sheet.py
+
+      - name: Cleanup
+        if: always()
+        run: rm -f service_account_key.json
