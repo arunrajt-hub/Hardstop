@@ -73,13 +73,15 @@ unschedule_valmo_hardstop.bat
 
 ### GitHub Actions (optional)
 
-The workflow `.github/workflows/valmo-hardstop.yml` runs at **4 PM** and **10 PM IST** when secrets are configured. Add these repository secrets:
+The workflow `.github/workflows/valmo-hardstop.yml` runs at **4 PM** and **10 PM IST** when secrets are configured. Add these repository secrets in Settings → Secrets and variables → Actions:
 
-- `GMAIL_EMAIL`
-- `GMAIL_APP_PASSWORD`
-- `SERVICE_ACCOUNT_JSON` (contents of `service_account_key.json`)
-- `WHAPI_TOKEN` (optional)
-- `WHATSAPP_PHONE` (optional)
+| Secret | Description |
+|--------|-------------|
+| `GMAIL_EMAIL` | Gmail address |
+| `GMAIL_APP_PASSWORD` | Gmail App Password |
+| `SERVICE_ACCOUNT_JSON` | Full contents of `service_account_key.json` (copy-paste the entire JSON) |
+| `WHAPI_TOKEN` | Optional – for WhatsApp |
+| `WHATSAPP_PHONE` | Optional – recipient(s) |
 
 ## Files
 
