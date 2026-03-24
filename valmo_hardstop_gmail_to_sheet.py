@@ -12,6 +12,8 @@ Attachments:
   1. hardstop_lsn-meesho-central@loadshare.net → Hardstop worksheet
      Columns: Date, awb, shipment_type, current_movement_type, current_status, location,
               shipment_value, location_ageing, location_age_bucket
+     Optional last column "Remarks" is preserved on each run (not from attachment).
+     WhatsApp image includes only rows with empty Remarks and omits the Remarks column.
   2. lost_lsn-meesho-central@loadshare.net → LostMarked worksheet
      Columns: Date, lost_date, awd, current_movement_type, loss_value, location
 
@@ -125,6 +127,9 @@ LOSTMARKED_HEADERS = ["Date"] + LOST_COLUMNS_TO_KEEP
 
 # Locations to filter
 TARGET_LOCATIONS = {"MQR", "MQE", "YLG", "YLZ", "MHK"}
+
+# Hardstop: user-maintained column (preserved when merging sheet updates)
+HARDSTOP_REMARKS_COLUMN = "Remarks"
 
 
 def get_gmail_connection():
@@ -347,6 +352,26 @@ def _get_sheet_client():
         return None, None
 
 
+def _excel_col_letter(n: int) -> str:
+    """1-based column index to Excel letter (1=A, 27=AA)."""
+    if n < 1:
+        return "A"
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _header_cell_index(headers: list, name: str) -> int | None:
+    """0-based column index for header name (case-insensitive), or None."""
+    nl = name.strip().lower()
+    for i, h in enumerate(headers):
+        if str(h).strip().lower() == nl:
+            return i
+    return None
+
+
 def _normalize_date_for_match(val: str) -> str:
     """Normalize date string for comparison (strip, handle formats)."""
     if not val:
@@ -357,11 +382,55 @@ def _normalize_date_for_match(val: str) -> str:
     return s
 
 
+def _hardstop_whatsapp_range_and_excludes(ws, last_row: int | None) -> tuple[str, list | None]:
+    """
+    Build A1 range for Hardstop image (all columns except Remarks) and row ranges to exclude
+    (sheet rows where Remarks has a value). exclude list is [(r,r), ...] for send_sheet_range_to_whatsapp.
+    """
+    end_row = last_row if last_row and last_row >= 2 else 50
+    end_row = min(max(end_row, 2), 500)
+
+    row1 = ws.get("1:1")
+    if not row1 or not row1[0]:
+        return f"A1:J{end_row}", None
+
+    headers = row1[0]
+    ri = _header_cell_index(headers, HARDSTOP_REMARKS_COLUMN)
+    if ri is None:
+        # No Remarks column yet — same as before (A–J)
+        return f"A1:J{end_row}", None
+    if ri < 1:
+        logger.warning("Remarks in column A is unsupported for WhatsApp crop; using A1:J")
+        return f"A1:J{end_row}", None
+
+    # Last data column before Remarks: 1-based column index = ri (0-based index of Remarks)
+    last_data_letter = _excel_col_letter(ri)
+    remarks_letter = _excel_col_letter(ri + 1)
+
+    exclude: list = []
+    try:
+        col_vals = ws.get(f"{remarks_letter}2:{remarks_letter}{end_row}")
+    except Exception:
+        col_vals = []
+    for i, row in enumerate(col_vals):
+        cell = row[0] if row else ""
+        if cell is not None and str(cell).strip():
+            exclude.append((i + 2, i + 2))
+
+    if exclude:
+        logger.info(
+            "WhatsApp image: excluding %d row(s) with Remarks; range A1:%s%s (no Remarks column)",
+            len(exclude),
+            last_data_letter,
+            end_row,
+        )
+    return f"A1:{last_data_letter}{end_row}", exclude or None
+
+
 def send_hardstop_to_whatsapp(date_str: str | None, last_row: int | None = None) -> bool:
     """
-    Send Hardstop worksheet as WhatsApp image — same pattern as conversion_trend_analyzer
-    (github.com/arunrajt-hub/conversion_trend_analyzer): fixed A1 range, _wh_log, caption;
-    no auto_detect_rows. Range is A1:J{last_row} where last_row comes from push_to_google_sheet.
+    Send Hardstop worksheet as WhatsApp image: data columns only (not Remarks), and only rows
+    where Remarks is empty. Uses same WHAPI path as conversion_trend_analyzer.
     """
     if not send_sheet_range_to_whatsapp:
         logger.warning("whatsapp_sheet_image not available - skip WhatsApp send")
@@ -382,19 +451,18 @@ def send_hardstop_to_whatsapp(date_str: str | None, last_row: int | None = None)
     try:
         from datetime import datetime
 
-        # Explicit range like conversion_trend_analyzer (A1:S25); Hardstop table is columns A–J
-        end_row = last_row if last_row and last_row >= 2 else 50
-        end_row = min(max(end_row, 2), 500)
-
         ws = sh.worksheet(HARDSTOP_WORKSHEET)
+        range_a1, exclude_row_ranges = _hardstop_whatsapp_range_and_excludes(ws, last_row)
+
         send_sheet_range_to_whatsapp(
             ws,
-            range=f"A1:J{end_row}",
+            range=range_a1,
             caption=(
                 f"Hardstop - {date_str or 'Report'} - "
                 f"{datetime.now().strftime('%d-%b-%Y %H:%M')}"
             ),
             log_func=_wh_log,
+            exclude_row_ranges=exclude_row_ranges,
         )
         return True
     except Exception as e:
@@ -434,27 +502,25 @@ def push_to_google_sheet(
 
         # Prepare headers and data rows
         headers = df.columns.tolist()
-        data_rows = df.fillna("").astype(str).values.tolist()
-        num_cols = len(headers)
+        if worksheet_name == HARDSTOP_WORKSHEET:
+            if _header_cell_index(headers, HARDSTOP_REMARKS_COLUMN) is None:
+                headers = headers + [HARDSTOP_REMARKS_COLUMN]
 
-        def col_letter(n: int) -> str:
-            """1->A, 2->B, ..., 27->AA"""
-            s = ""
-            while n > 0:
-                n, r = divmod(n - 1, 26)
-                s = chr(65 + r) + s
-            return s
+        data_rows = df.fillna("").astype(str).values.tolist()
+        if worksheet_name == HARDSTOP_WORKSHEET:
+            extra = len(headers) - len(df.columns)
+            if extra > 0:
+                data_rows = [list(row) + [""] * extra for row in data_rows]
 
         existing = ws.get_all_values()
         target_date = _normalize_date_for_match(date_str or "") if date_str else ""
 
         if not existing or len(existing) <= 1:
-            # Empty or headers-only: append
             combined = [headers] + data_rows if data_rows else [headers]
             last_row = len(combined)
             logger.info("Appended %d rows to %s (initial)", len(data_rows), worksheet_name)
         else:
-            # If date exists: replace (remove old rows for that date). If new: append.
+            old_h = existing[0]
             data_existing = existing[1:]
             if target_date:
                 other_rows = [
@@ -462,10 +528,24 @@ def push_to_google_sheet(
                     if _normalize_date_for_match(row[0] if row else "") != target_date
                 ]
                 had_matching = len(other_rows) < len(data_existing)
-                data_existing = other_rows
             else:
                 had_matching = False
-            combined_data = data_existing + data_rows
+                other_rows = data_existing
+
+            if worksheet_name == HARDSTOP_WORKSHEET:
+                remapped = []
+                for row in other_rows:
+                    new_r = []
+                    for h in headers:
+                        ji = _header_cell_index(old_h, str(h))
+                        if ji is not None and ji < len(row):
+                            new_r.append(row[ji])
+                        else:
+                            new_r.append("")
+                    remapped.append(new_r)
+                other_rows = remapped
+
+            combined_data = other_rows + data_rows
             combined = [headers] + combined_data
             last_row = len(combined)
             if had_matching:

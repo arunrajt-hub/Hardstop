@@ -22,7 +22,9 @@ Automation to process the daily **Valmo Control Tower** email, extract hardstop 
 - Searches for the **latest** email with that subject (and today's date when possible)
 - **Same date:** Replace existing rows for that date
 - **New date:** Append rows
-- **WhatsApp:** Sends header + rows for the report date (when `whatsapp_sheet_image` is available)
+- **Hardstop "Remarks" column:** If present as the last column, values are **preserved** for rows kept when updating other dates. New rows from the attachment get an empty Remarks cell.
+- **WhatsApp (Hardstop):** Image shows data columns **excluding** Remarks, and **only rows where Remarks is empty** (rows with any text in Remarks are omitted from the image).
+- **WhatsApp:** Uses `whatsapp_sheet_image` when configured (`WHAPI_TOKEN`, etc.)
 
 ## Setup
 
