@@ -13,7 +13,7 @@ Attachments:
      Columns: Date, awb, shipment_type, current_movement_type, current_status, location,
               shipment_value, location_ageing, location_age_bucket
   2. lost_lsn-meesho-central@loadshare.net → LostMarked worksheet
-     Columns: Date, lost_date, current_movement_type, loss_value, location
+     Columns: Date, lost_date, awd, current_movement_type, loss_value, location
 
 Locations to filter: MQR, MQE, YLG, YLZ, MHK
 
@@ -106,12 +106,19 @@ COLUMNS_TO_KEEP = [
 ]
 
 # Lost attachment columns (Date is added from email subject, not from file)
+# Output order: Date, lost_date, awd (3rd data column), then movement / loss / location
 LOST_COLUMNS_TO_KEEP = [
     "lost_date",
+    "awd",
     "current_movement_type",
     "loss_value",
     "location",
 ]
+
+# Map output column name → source header names to try (case-insensitive via find_column)
+LOST_COLUMN_ALIASES = {
+    "awd": ("awd", "awb"),
+}
 
 # Expected output columns for LostMarked (Date first, from email subject)
 LOSTMARKED_HEADERS = ["Date"] + LOST_COLUMNS_TO_KEEP
@@ -260,14 +267,25 @@ def _filter_by_location(df: "pd.DataFrame") -> "pd.DataFrame":
     return df
 
 
-def filter_and_transform(df: "pd.DataFrame", columns: list[str]) -> "pd.DataFrame":
+def filter_and_transform(
+    df: "pd.DataFrame",
+    columns: list[str],
+    column_aliases: dict[str, tuple[str, ...]] | None = None,
+) -> "pd.DataFrame":
     """Keep only required columns and filter by target locations."""
     if df.empty:
         return df
 
     col_map = {}
     for want in columns:
-        found = find_column(df, want)
+        found = None
+        if column_aliases and want in column_aliases:
+            for alias in column_aliases[want]:
+                found = find_column(df, alias)
+                if found:
+                    break
+        if not found:
+            found = find_column(df, want)
         if found:
             col_map[found] = want
 
@@ -287,7 +305,7 @@ def filter_and_transform_hardstop(df: "pd.DataFrame") -> "pd.DataFrame":
 
 def filter_and_transform_lost(df: "pd.DataFrame") -> "pd.DataFrame":
     """Filter lost data (columns + locations)."""
-    return filter_and_transform(df, LOST_COLUMNS_TO_KEEP)
+    return filter_and_transform(df, LOST_COLUMNS_TO_KEEP, LOST_COLUMN_ALIASES)
 
 
 def add_date_column(df: "pd.DataFrame", date_str: str | None) -> "pd.DataFrame":
@@ -298,6 +316,15 @@ def add_date_column(df: "pd.DataFrame", date_str: str | None) -> "pd.DataFrame":
     df = df.copy()
     df.insert(0, "Date", date_str)
     return df
+
+
+def finalize_lostmarked_frame(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Ensure LostMarked columns match LOSTMARKED_HEADERS (fill missing with empty string)."""
+    df = df.copy()
+    for h in LOSTMARKED_HEADERS:
+        if h not in df.columns:
+            df[h] = ""
+    return df[LOSTMARKED_HEADERS]
 
 
 def _get_sheet_client():
@@ -501,8 +528,7 @@ def run_from_gmail(target_date: str | None = None) -> bool:
                     df = filter_and_transform_lost(df)
                     if not df.empty:
                         df = add_date_column(df, date_str)
-                        # Ensure Date column is first for LostMarked
-                        df = df[LOSTMARKED_HEADERS] if all(c in df.columns for c in LOSTMARKED_HEADERS) else df
+                        df = finalize_lostmarked_frame(df)
                         ok, _ = push_to_google_sheet(df, LOSTMARKED_WORKSHEET, date_str)
                         if ok:
                             any_ok = True
@@ -547,8 +573,8 @@ def run_from_file(file_path: str, date_str: str | None = None, is_lost: bool = F
         return False
 
     df = add_date_column(df, date_str)
-    if is_lost and all(c in df.columns for c in LOSTMARKED_HEADERS):
-        df = df[LOSTMARKED_HEADERS]
+    if is_lost:
+        df = finalize_lostmarked_frame(df)
     ws = LOSTMARKED_WORKSHEET if is_lost else HARDSTOP_WORKSHEET
     ok, last_row = push_to_google_sheet(df, ws, date_str)
     if ok and not is_lost:

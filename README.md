@@ -13,7 +13,8 @@ Automation to process the daily **Valmo Control Tower** email, extract hardstop 
 ## Output
 
 - **Google Sheet:** [Meesho Reports](https://docs.google.com/spreadsheets/d/1qnqzVf-S41F4S6DN8CRtXVgk-BcsaW377aVVEyFrnzg)
-- **Worksheets:** Hardstop, LostMarked
+- **Worksheets:** Hardstop, LostMarked  
+- **LostMarked columns:** Date, lost_date, awd (from source `awd` or `awb`), current_movement_type, loss_value, location  
 - **Locations filtered:** MQR, MQE, YLG, YLZ, MHK
 
 ## Logic
