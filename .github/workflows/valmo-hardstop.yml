@@ -51,6 +51,10 @@ jobs:
           WHAPI_TOKEN: ${{ secrets.WHAPI_TOKEN }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          # Same Chrome + driver pair from setup-chrome (avoids WDM downloading a mismatched driver)
+          CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
+          # Optional: Render html-to-image-service URL — skips local Chrome if set
+          HTML_TO_IMAGE_SERVICE_URL: ${{ secrets.HTML_TO_IMAGE_SERVICE_URL }}
         run: python valmo_hardstop_gmail_to_sheet.py
 
       - name: Cleanup

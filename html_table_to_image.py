@@ -25,51 +25,73 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from PIL import Image, ImageOps
 
-def setup_chrome_driver(chromedriver_path=None):
-    """Setup headless Chrome driver for screenshot - auto-matches Chrome version via webdriver-manager"""
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--force-device-scale-factor=2')  # High DPI
-    chrome_options.add_argument('--disable-setuid-sandbox')  # Required in Docker/cloud
+def _resolve_chromedriver_path(explicit: str | None) -> str | None:
+    """Prefer explicit arg, then CHROMEDRIVER / CHROMEDRIVER_PATH (e.g. GitHub Actions setup-chrome)."""
+    for candidate in (
+        explicit,
+        os.environ.get("CHROMEDRIVER"),
+        os.environ.get("CHROMEDRIVER_PATH"),
+    ):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
 
-    # Cloud/Linux: set Chrome binary path (Render, Railway, Fly.io install Chrome in Docker)
-    for chrome_bin in [os.environ.get('CHROME_BIN'), '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
-                       '/usr/bin/chromium', '/usr/bin/chromium-browser']:
+
+def setup_chrome_driver(chromedriver_path=None):
+    """Setup headless Chrome for screenshot. Pairs CHROME_BIN with matching driver; avoids WDM on CI."""
+    chrome_options = Options()
+    # Chrome 109+ / GitHub Actions: new headless mode is more stable than legacy --headless
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--force-device-scale-factor=2")  # High DPI
+    chrome_options.add_argument("--disable-setuid-sandbox")  # Required in Docker/cloud
+
+    # Cloud/Linux: set Chrome binary path (Render, Railway, GitHub Actions setup-chrome)
+    for chrome_bin in [
+        os.environ.get("CHROME_BIN"),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ]:
         if chrome_bin and os.path.exists(chrome_bin):
             chrome_options.binary_location = chrome_bin
             break
 
     service = None
+    resolved = _resolve_chromedriver_path(chromedriver_path)
+    if resolved:
+        service = Service(resolved)
 
-    # 1. Use explicit path if provided and exists
-    if chromedriver_path and os.path.exists(chromedriver_path):
-        service = Service(chromedriver_path)
+    # chromedriver on PATH (setup-chrome often adds it)
+    if not service:
+        which_cd = shutil.which("chromedriver")
+        if which_cd and os.path.isfile(which_cd):
+            service = Service(which_cd)
 
-    # 2. Try ChromeDriverManager first (auto-downloads matching version - fixes 143 vs 145 mismatch)
+    # Known paths
+    if not service:
+        for path in (
+            r"C:\Users\Lsn-Arun\Downloads\chromedriver-win64\chromedriver.exe",
+            os.path.join(os.path.dirname(__file__), "chromedriver.exe"),
+            "/usr/local/bin/chromedriver",
+            "/usr/bin/chromedriver",
+        ):
+            if path and os.path.isfile(path):
+                service = Service(path)
+                break
+
+    # Last resort: webdriver-manager (can mismatch CHROME_BIN on CI — prefer CHROMEDRIVER env)
     if not service:
         try:
             from webdriver_manager.chrome import ChromeDriverManager
+
             service = Service(ChromeDriverManager().install())
         except Exception:
             pass
-
-    # 3. Fallback: try common locations
-    if not service:
-        possible_paths = [
-            r"C:\Users\Lsn-Arun\Downloads\chromedriver-win64\chromedriver.exe",
-            os.path.join(os.path.dirname(__file__), "chromedriver.exe"),
-            "chromedriver.exe",
-            "/usr/local/bin/chromedriver",
-            "/usr/bin/chromedriver"
-        ]
-        for path in possible_paths:
-            if path and os.path.exists(path):
-                service = Service(path)
-                break
 
     if not service:
         service = Service()  # Assumes chromedriver in PATH

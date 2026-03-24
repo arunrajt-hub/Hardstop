@@ -76,7 +76,9 @@ unschedule_valmo_hardstop.bat
 
 ### GitHub Actions (optional)
 
-The workflow `.github/workflows/valmo-hardstop.yml` runs on **GitHub-hosted Ubuntu** at **4 PM** and **10 PM IST**. It installs **Chrome** for HTML→image (WhatsApp) the same way as your other automations. Push this repo to GitHub, then add secrets below.
+The workflow `.github/workflows/valmo-hardstop.yml` runs on **GitHub-hosted Ubuntu** at **4 PM** and **10 PM IST**. It installs **Chrome + ChromeDriver** from the same action and passes **`CHROMEDRIVER`** so HTML→image does not download a mismatched driver (which caused `Chrome instance exited` on the runner).
+
+**Optional:** set secret **`HTML_TO_IMAGE_SERVICE_URL`** to your [html-to-image-service](https://github.com/arunrajt-hub/html-to-image-service) URL on Render (e.g. `https://your-app.onrender.com`). When set, WhatsApp image conversion uses HTTP and **does not start Chrome** on the runner (most reliable for Actions).
 
 Add these repository secrets in Settings → Secrets and variables → Actions:
 
@@ -87,6 +89,7 @@ Add these repository secrets in Settings → Secrets and variables → Actions:
 | `SERVICE_ACCOUNT_JSON` | Full contents of `service_account_key.json` (copy-paste the entire JSON) |
 | `WHAPI_TOKEN` | Optional – for WhatsApp |
 | `WHATSAPP_PHONE` | Optional – recipient(s) |
+| `HTML_TO_IMAGE_SERVICE_URL` | Optional – Render/deployed `/convert` base URL; skips Chrome in CI |
 
 ## Files
 
