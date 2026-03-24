@@ -73,7 +73,9 @@ unschedule_valmo_hardstop.bat
 
 ### GitHub Actions (optional)
 
-The workflow `.github/workflows/valmo-hardstop.yml` runs at **4 PM** and **10 PM IST** when secrets are configured. Add these repository secrets in Settings → Secrets and variables → Actions:
+The workflow `.github/workflows/valmo-hardstop.yml` runs on **GitHub-hosted Ubuntu** at **4 PM** and **10 PM IST**. It installs **Chrome** for HTML→image (WhatsApp) the same way as your other automations. Push this repo to GitHub, then add secrets below.
+
+Add these repository secrets in Settings → Secrets and variables → Actions:
 
 | Secret | Description |
 |--------|-------------|
@@ -89,6 +91,7 @@ The workflow `.github/workflows/valmo-hardstop.yml` runs at **4 PM** and **10 PM
 |------|---------|
 | `valmo_hardstop_gmail_to_sheet.py` | Main script |
 | `whatsapp_sheet_image.py` | WhatsApp image sender (optional) |
+| `html_table_to_image.py` | Sheet HTML → PNG (Chrome/Selenium; required for WhatsApp image) |
 | `run_valmo_hardstop.bat` | Batch runner |
 | `schedule_valmo_hardstop.bat` | Create Windows scheduled tasks |
 | `schedule_valmo_hardstop.ps1` | PowerShell scheduler |

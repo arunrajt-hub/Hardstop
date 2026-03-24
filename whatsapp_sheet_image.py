@@ -2,6 +2,10 @@
 Shared module: Capture Google Sheet range → convert to image → send via WHAPI.
 Use from any script after pushing data to a worksheet.
 
+Optional: set HTML_TO_IMAGE_SERVICE_URL to a deployed html-to-image-service
+(https://github.com/arunrajt-hub/html-to-image-service) so conversion runs in the cloud
+(no Chrome on this machine). Falls back to local html_table_to_image if unset or if the request fails.
+
 Usage:
     from whatsapp_sheet_image import send_sheet_range_to_whatsapp
 
@@ -13,6 +17,7 @@ Standalone test (same sheet as Automatic_Untraceable_Googlesheet_Reports):
 """
 
 import os
+import sys
 
 # Load .env if present (pip install python-dotenv)
 try:
@@ -63,6 +68,10 @@ WHATSAPP_CONFIG = {
     'text_api_url': 'https://gate.whapi.cloud/messages/text',
     'chromedriver_path': CHROMEDRIVER_PATH,
 }
+
+# Optional: HTML→PNG via HTTP (e.g. https://github.com/arunrajt-hub/html-to-image-service on Render).
+# Base URL only, e.g. https://your-app.onrender.com — avoids Chrome/Selenium on the machine running this script.
+HTML_TO_IMAGE_SERVICE_URL = (os.getenv('HTML_TO_IMAGE_SERVICE_URL') or '').strip()
 
 
 def _log(msg, level='INFO', log_func=None):
@@ -288,33 +297,71 @@ def sheet_range_to_html(rows, cell_colors=None):
 
 
 def html_to_image_bytes(html_content, chromedriver_path=None):
-    """Convert HTML to PNG base64. Uses local html_table_to_image (Chrome/Selenium)."""
+    """Convert HTML to PNG base64. Uses HTML_TO_IMAGE_SERVICE_URL if set, else local html_table_to_image (Chrome)."""
+    # Cloud service (same API as arunrajt-hub/html-to-image-service server.py POST /convert)
+    if HTML_TO_IMAGE_SERVICE_URL and requests:
+        url = HTML_TO_IMAGE_SERVICE_URL.rstrip('/')
+        if not url.endswith('convert'):
+            url = f"{url}/convert"
+        try:
+            resp = requests.post(
+                url,
+                json={
+                    'html': html_content,
+                    'return_json': True,
+                    'raw_html': True,
+                    'crop_selector': '.container',
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get('success') and data.get('image_base64'):
+                return True, data['image_base64'], None
+            return False, None, data.get('error', 'Cloud conversion failed')
+        except Exception:
+            pass  # fall through to local Selenium
+
+    _here = os.path.dirname(os.path.abspath(__file__))
+    if _here not in sys.path:
+        sys.path.insert(0, _here)
     try:
         from html_table_to_image import html_to_image
-        chromedriver_path = chromedriver_path or WHATSAPP_CONFIG.get('chromedriver_path')
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-            output_path = tmp.name
-        try:
-            result = html_to_image(
-                html_content=html_content,
-                output_path=output_path,
-                include_base64=True,
-                raw_html=True,
-                crop_selector=".container",
-                chromedriver_path=chromedriver_path
+    except ImportError as e:
+        hint = ''
+        if not HTML_TO_IMAGE_SERVICE_URL:
+            hint = (
+                ' Or deploy https://github.com/arunrajt-hub/html-to-image-service and set '
+                'HTML_TO_IMAGE_SERVICE_URL (no local Chrome needed).'
             )
-            if result.get('success') and result.get('image_base64'):
-                return True, result['image_base64'], None
-            return False, None, result.get('error', 'Conversion failed')
-        finally:
-            try:
-                os.unlink(output_path)
-            except OSError:
-                pass
-    except ImportError:
-        return False, None, "html_table_to_image not found. Install: pip install selenium webdriver-manager pillow"
+        return (
+            False,
+            None,
+            f"{e}. Install: pip install selenium webdriver-manager pillow{hint} "
+            f"(html_table_to_image.py beside whatsapp_sheet_image.py: {_here})",
+        )
+    chromedriver_path = chromedriver_path or WHATSAPP_CONFIG.get('chromedriver_path')
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        output_path = tmp.name
+    try:
+        result = html_to_image(
+            html_content=html_content,
+            output_path=output_path,
+            include_base64=True,
+            raw_html=True,
+            crop_selector='.container',
+            chromedriver_path=chromedriver_path,
+        )
+        if result.get('success') and result.get('image_base64'):
+            return True, result['image_base64'], None
+        return False, None, result.get('error', 'Conversion failed')
     except Exception as e:
         return False, None, str(e)
+    finally:
+        try:
+            os.unlink(output_path)
+        except OSError:
+            pass
 
 
 def send_text_to_whatsapp(text: str, log_func=None) -> bool:

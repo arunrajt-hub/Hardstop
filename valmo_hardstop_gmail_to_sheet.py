@@ -30,8 +30,9 @@ Usage:
 Environment:
     GMAIL_EMAIL        - Gmail address to read from (default: arunraj@loadshare.net)
     GMAIL_APP_PASSWORD - Gmail App Password (create at myaccount.google.com/apppasswords)
-    WHAPI_TOKEN        - WhatsApp API token (for Hardstop image)
+    WHAPI_TOKEN        - WhatsApp API token (same as 4D Active / whatsapp_sheet_image)
     WHATSAPP_PHONE     - WhatsApp recipient(s), comma-separated
+    .env file          - Place next to script; load_dotenv() loads WHAPI_TOKEN etc.
 
 Scheduling (run daily after the Valmo email arrives):
     Windows Task Scheduler: Run run_valmo_hardstop.bat at 9:00 AM daily
@@ -44,8 +45,13 @@ import imaplib
 import logging
 import os
 import re
-import base64
 from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 try:
     import pandas as pd
@@ -59,17 +65,9 @@ except ImportError:
 
 try:
     import whatsapp_sheet_image as _wsi
-    sheet_range_to_html = _wsi.sheet_range_to_html
-    html_to_image_bytes = _wsi.html_to_image_bytes
-    WHATSAPP_CONFIG = getattr(_wsi, "WHATSAPP_CONFIG", {})
-    _get_recipients = getattr(_wsi, "_get_recipients", lambda: [])
-    import requests
+    send_sheet_range_to_whatsapp = _wsi.send_sheet_range_to_whatsapp
 except ImportError:
-    sheet_range_to_html = None
-    html_to_image_bytes = None
-    WHATSAPP_CONFIG = {}
-    _get_recipients = lambda: []
-    requests = None
+    send_sheet_range_to_whatsapp = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -334,78 +332,46 @@ def _normalize_date_for_match(val: str) -> str:
 
 def send_hardstop_to_whatsapp(date_str: str | None, last_row: int | None = None) -> bool:
     """
-    Send Hardstop: header row + only the rows where Date column matches the report date.
+    Send Hardstop worksheet as WhatsApp image — same pattern as conversion_trend_analyzer
+    (github.com/arunrajt-hub/conversion_trend_analyzer): fixed A1 range, _wh_log, caption;
+    no auto_detect_rows. Range is A1:J{last_row} where last_row comes from push_to_google_sheet.
     """
-    if not sheet_range_to_html or not html_to_image_bytes or not requests:
+    if not send_sheet_range_to_whatsapp:
         logger.warning("whatsapp_sheet_image not available - skip WhatsApp send")
-        return False
-    if not WHATSAPP_CONFIG.get("enabled"):
-        logger.info("WhatsApp disabled - skip Hardstop send")
-        return False
-    token = WHATSAPP_CONFIG.get("token")
-    recipients = _get_recipients() if callable(_get_recipients) else []
-    if not token or not recipients:
-        logger.warning("WHAPI_TOKEN or WHATSAPP_PHONE not set - skip WhatsApp send")
         return False
 
     _, sh = _get_sheet_client()
     if not sh:
         return False
-    try:
-        ws = sh.worksheet(HARDSTOP_WORKSHEET)
-        max_rows = last_row or 1000
-        # Read header + all data rows
-        all_data = ws.get(f"A1:I{max_rows}") or []
-        if not all_data or len(all_data) < 2:
-            logger.warning("No Hardstop data to send to WhatsApp")
-            return False
 
-        header_row = all_data[0]
-        data_rows = all_data[1:]
-        target_date = _normalize_date_for_match(date_str or "")
-
-        # Filter rows where column A (Date) matches the report date
-        if target_date:
-            matching_rows = [
-                row for row in data_rows
-                if _normalize_date_for_match(row[0] if row else "") == target_date
-            ]
+    def _wh_log(msg, level):
+        if level == "ERROR":
+            logger.error(msg)
+        elif level == "WARNING":
+            logger.warning(msg)
         else:
-            # No date filter: use all data rows (fallback)
-            matching_rows = data_rows
+            logger.info(msg)
 
-        all_rows = [header_row] + matching_rows
-        if len(all_rows) < 2:
-            logger.warning("No Hardstop rows for date %s to send", date_str)
-            return False
+    try:
+        from datetime import datetime
 
-        html = sheet_range_to_html(all_rows)
-        if not html:
-            logger.error("Could not build HTML for Hardstop")
-            return False
+        # Explicit range like conversion_trend_analyzer (A1:S25); Hardstop table is columns A–J
+        end_row = last_row if last_row and last_row >= 2 else 50
+        end_row = min(max(end_row, 2), 500)
 
-        success, img_base64, err = html_to_image_bytes(html)
-        if not success:
-            logger.error("Hardstop HTML to image failed: %s", err)
-            return False
-
-        media_value = f"data:image/png;base64,{img_base64}"
-        caption = f"Hardstop - {date_str or 'Report'}"
-        url = WHATSAPP_CONFIG.get("api_url", "https://gate.whapi.cloud/messages/image")
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        for recipient in recipients:
-            payload = {"to": recipient, "caption": caption, "media": media_value}
-            try:
-                logger.info("Sending Hardstop to WhatsApp (%s)...", recipient)
-                resp = requests.post(url, json=payload, headers=headers, timeout=30)
-                resp.raise_for_status()
-                logger.info("Hardstop WhatsApp image sent")
-                return True
-            except requests.exceptions.RequestException as e:
-                logger.error("WhatsApp send failed: %s", e)
-        return False
+        ws = sh.worksheet(HARDSTOP_WORKSHEET)
+        send_sheet_range_to_whatsapp(
+            ws,
+            range=f"A1:J{end_row}",
+            caption=(
+                f"Hardstop - {date_str or 'Report'} - "
+                f"{datetime.now().strftime('%d-%b-%Y %H:%M')}"
+            ),
+            log_func=_wh_log,
+        )
+        return True
     except Exception as e:
-        logger.error("WhatsApp send failed: %s", e)
+        logger.warning("WhatsApp send failed (non-fatal): %s", e)
         return False
 
 
@@ -521,8 +487,8 @@ def run_from_gmail(target_date: str | None = None) -> bool:
                         ok, last_row = push_to_google_sheet(df, HARDSTOP_WORKSHEET, date_str)
                         if ok:
                             any_ok = True
-                            # Send Hardstop A1:I1 & A2:I{end} to WhatsApp (dynamic, max 16 rows)
-                            send_hardstop_to_whatsapp(date_str, last_row=last_row or 16)
+                            # WhatsApp: same as conversion_trend_analyzer — fixed A1:J{last_row} image
+                            send_hardstop_to_whatsapp(date_str, last_row=last_row)
                     else:
                         logger.warning("No rows after hardstop filtering")
 
@@ -586,7 +552,7 @@ def run_from_file(file_path: str, date_str: str | None = None, is_lost: bool = F
     ws = LOSTMARKED_WORKSHEET if is_lost else HARDSTOP_WORKSHEET
     ok, last_row = push_to_google_sheet(df, ws, date_str)
     if ok and not is_lost:
-        send_hardstop_to_whatsapp(date_str, last_row=last_row or 16)
+        send_hardstop_to_whatsapp(date_str, last_row=last_row)
     return ok
 
 
